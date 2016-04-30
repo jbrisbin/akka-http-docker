@@ -1,7 +1,6 @@
 package com.jbrisbin.docker
 
 import java.net.URI
-import java.time.Instant
 
 import akka.actor.{ActorRef, ActorSystem}
 import akka.http.scaladsl.client.RequestBuilding
@@ -21,7 +20,7 @@ import scala.concurrent.Future
 /**
   * @author Jon Brisbin <jbrisbin@basho.com>
   */
-object Docker {
+class Docker(dockerHost: URI) {
 
   implicit val system = ActorSystem("docker")
   implicit val materializer = ActorMaterializer()
@@ -30,8 +29,6 @@ object Docker {
   implicit val serialization: Serialization = jackson.Serialization
 
   import system.dispatcher
-
-  val dockerHost: URI = URI.create(System.getenv().getOrDefault("DOCKER_HOST", "https://127.0.0.1:2376"))
 
   lazy val sslctx = ConnectionContext.https(SSL.createSSLContext)
   lazy val docker = Http().outgoingConnectionHttps(dockerHost.getHost, dockerHost.getPort, sslctx)
@@ -71,17 +68,9 @@ object Docker {
       path = Uri.Path("/containers/json"),
       queryString = Some(Uri.Query(params).toString())
     ))
-    request(req).flatMap(e => e.to[List[Map[String, AnyRef]]].map(l => l.map(m => {
-      Container(
-        id = m("Id").asInstanceOf[String],
-        names = m.getOrElse("Names", Seq.empty).asInstanceOf[Seq[String]],
-        image = m("Image").asInstanceOf[String],
-        command = m("Command").asInstanceOf[String],
-        created = Instant.ofEpochSecond(m.getOrElse("Created", 0).asInstanceOf[BigInt].toLong),
-        status = m("Status").asInstanceOf[String],
-        ports = m.getOrElse("Ports", Seq.empty).asInstanceOf[List[Map[String, AnyRef]]]
-      )
-    })))
+    request(req)
+      .flatMap(e => e.to[List[Map[String, AnyRef]]])
+      .map(l => l.map(m => map2container(m)))
   }
 
   def images(images: Images = Images()): Future[List[Image]] = {
@@ -104,24 +93,9 @@ object Docker {
       path = Uri.Path("/images/json"),
       queryString = Some(Uri.Query(params).toString())
     ))
-    request(req).flatMap(e => e.to[List[Map[String, AnyRef]]].map(l => l.map(m => {
-      Image(
-        id = m("Id").asInstanceOf[String],
-        parentId = m("ParentId").asInstanceOf[String],
-        repoTags = m.getOrElse("RepoTags", Seq.empty).asInstanceOf[Seq[String]] match {
-          case null => Seq.empty
-          case s => s
-        },
-        repoDigests = m.getOrElse("RepoDigests", Seq.empty).asInstanceOf[Seq[String]],
-        created = Instant.ofEpochSecond(m.getOrElse("Created", 0).asInstanceOf[BigInt].toLong),
-        size = m("Size").asInstanceOf[BigInt].toLong,
-        virtualSize = m("VirtualSize").asInstanceOf[BigInt].toLong,
-        labels = m.getOrElse("Labels", Map.empty[String, String]).asInstanceOf[Map[String, String]] match {
-          case null => Map.empty
-          case m => m
-        }
-      )
-    })))
+    request(req)
+      .flatMap(e => e.to[List[Map[String, AnyRef]]])
+      .map(l => l.map(m => map2image(m)))
   }
 
   def run(run: Run): ActorRef = {
@@ -139,11 +113,14 @@ object Docker {
       })
   }
 
-  implicit private def convertPorts(l: List[Map[String, AnyRef]]): Seq[Port] = {
-    l.map(m => {
-      Port(`private` = m("PrivatePort").asInstanceOf[BigInt].toInt,
-        `public` = m("PublicPort").asInstanceOf[BigInt].toInt,
-        `type` = m("Type").asInstanceOf[String])
-    })
-  }
+}
+
+object Docker {
+
+  private val instance = Docker(System.getenv().getOrDefault("DOCKER_HOST", "https://127.0.0.1:2376"))
+
+  def apply(): Docker = instance
+
+  def apply(dockerHost: String) = new Docker(URI.create(dockerHost))
+
 }

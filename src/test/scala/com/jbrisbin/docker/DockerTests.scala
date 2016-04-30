@@ -15,7 +15,7 @@ class DockerTests {
 
   @Test
   def canListContainers() = {
-    val containers = Await.result(Docker.containers(), Duration.Inf)
+    val containers = Await.result(Docker().containers(), Duration.Inf)
 
     containers.foreach(c => {
       log.info(s"container: ${c.image}, command: ${c.command}")
@@ -24,7 +24,7 @@ class DockerTests {
 
   @Test
   def canListImages() = {
-    val images = Await.result(Docker.images(), Duration.Inf)
+    val images = Await.result(Docker().images(), Duration.Inf)
 
     images.foreach(i => {
       log.info(s"image: ${i.id}, labels: ${i.labels}")
