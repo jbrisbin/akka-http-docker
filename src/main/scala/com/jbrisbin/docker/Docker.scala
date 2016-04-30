@@ -5,6 +5,7 @@ import java.time.Instant
 
 import akka.actor.{ActorRef, ActorSystem}
 import akka.http.scaladsl.client.RequestBuilding
+import akka.http.scaladsl.model.StatusCodes._
 import akka.http.scaladsl.model.{HttpRequest, ResponseEntity, Uri}
 import akka.http.scaladsl.unmarshalling.Unmarshal
 import akka.http.scaladsl.{ConnectionContext, Http}
@@ -13,7 +14,6 @@ import akka.stream.scaladsl.{Sink, Source}
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.scala.DefaultScalaModule
 import de.heikoseeberger.akkahttpjson4s.Json4sSupport._
-import org.json4s.jackson.Json4sScalaModule
 import org.json4s.{DefaultFormats, Formats, Serialization, jackson}
 
 import scala.concurrent.Future
@@ -84,6 +84,42 @@ object Docker {
     })))
   }
 
+  def images(images: Images = Images()): Future[List[Image]] = {
+    var params = Map[String, String]()
+
+    images.all match {
+      case true => params += ("all" -> "true")
+      case _ =>
+    }
+    images.filters match {
+      case m if m.isEmpty =>
+      case m => params += ("filters" -> mapper.writeValueAsString(m))
+    }
+
+    val req = RequestBuilding.Get(Uri(
+      path = Uri.Path("/images/json"),
+      queryString = Some(Uri.Query(params).toString())
+    ))
+    request(req).flatMap(e => e.to[List[Map[String, AnyRef]]].map(l => l.map(m => {
+      Image(
+        id = m("Id").asInstanceOf[String],
+        parentId = m("ParentId").asInstanceOf[String],
+        repoTags = m.getOrElse("RepoTags", Seq.empty).asInstanceOf[Seq[String]] match {
+          case null => Seq.empty
+          case s => s
+        },
+        repoDigests = m.getOrElse("RepoDigests", Seq.empty).asInstanceOf[Seq[String]],
+        created = Instant.ofEpochSecond(m.getOrElse("Created", 0).asInstanceOf[BigInt].toLong),
+        size = m("Size").asInstanceOf[BigInt].toLong,
+        virtualSize = m("VirtualSize").asInstanceOf[BigInt].toLong,
+        labels = m.getOrElse("Labels", Map.empty[String, String]).asInstanceOf[Map[String, String]] match {
+          case null => Map.empty
+          case m => m
+        }
+      )
+    })))
+  }
+
   def run(run: Run): ActorRef = {
     null
   }
@@ -92,7 +128,11 @@ object Docker {
     Source.single(req)
       .via(docker)
       .runWith(Sink.head)
-      .map(resp => Unmarshal(resp.entity))
+      .flatMap(resp => resp.status match {
+        case OK => Future.successful(Unmarshal(resp.entity))
+        case e@(ClientError(_) | ServerError(_)) => Future.failed(throw new RuntimeException(e.reason))
+        case e => Future.failed(new RuntimeException(s"Unknown error $e"))
+      })
   }
 
   implicit private def convertPorts(l: List[Map[String, AnyRef]]): Seq[Port] = {

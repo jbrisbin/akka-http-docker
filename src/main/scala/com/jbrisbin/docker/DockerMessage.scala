@@ -25,6 +25,10 @@ case class Containers(all: Boolean = false,
                       size: Boolean = false,
                       filters: Map[String, Seq[String]] = Map.empty) extends DockerMessage
 
+case class Images(all: Boolean = false,
+                  filter: String = null,
+                  filters: Map[String, Seq[String]] = Map.empty) extends DockerMessage
+
 case class Image(id: String,
                  parentId: String,
                  repoTags: Seq[String],
