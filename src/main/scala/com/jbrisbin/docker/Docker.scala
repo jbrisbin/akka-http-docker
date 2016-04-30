@@ -91,6 +91,10 @@ object Docker {
       case true => params += ("all" -> "true")
       case _ =>
     }
+    images.filter match {
+      case null =>
+      case f => params += ("filter" -> f)
+    }
     images.filters match {
       case m if m.isEmpty =>
       case m => params += ("filters" -> mapper.writeValueAsString(m))
