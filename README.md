@@ -1,4 +1,4 @@
-# Docker Akka HTTP 
+# Akka HTTP Docker 
 
 `akka-http-docker` is a Docker client that is based on Akka HTTP. It's aim is to provide a Scala and Akka Streams-centric approach to interacting with Docker.
 
