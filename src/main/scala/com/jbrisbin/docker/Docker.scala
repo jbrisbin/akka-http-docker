@@ -5,15 +5,16 @@ import java.net.URI
 import akka.actor.{ActorRef, ActorSystem}
 import akka.http.scaladsl.client.RequestBuilding
 import akka.http.scaladsl.model.StatusCodes._
-import akka.http.scaladsl.model.{HttpRequest, ResponseEntity, Uri}
+import akka.http.scaladsl.model._
 import akka.http.scaladsl.unmarshalling.Unmarshal
 import akka.http.scaladsl.{ConnectionContext, Http}
 import akka.stream.ActorMaterializer
 import akka.stream.scaladsl.{Sink, Source}
-import com.fasterxml.jackson.databind.ObjectMapper
-import com.fasterxml.jackson.module.scala.DefaultScalaModule
+import com.fasterxml.jackson.databind.SerializationFeature
 import de.heikoseeberger.akkahttpjson4s.Json4sSupport._
+import org.json4s.jackson.JsonMethods
 import org.json4s.{DefaultFormats, Formats, Serialization, jackson}
+import org.slf4j.LoggerFactory
 
 import scala.concurrent.Future
 
@@ -21,6 +22,8 @@ import scala.concurrent.Future
   * @author Jon Brisbin <jbrisbin@basho.com>
   */
 class Docker(dockerHost: URI) {
+
+  val logger = LoggerFactory.getLogger(classOf[Docker])
 
   implicit val system = ActorSystem("docker")
   implicit val materializer = ActorMaterializer()
@@ -33,35 +36,68 @@ class Docker(dockerHost: URI) {
   lazy val sslctx = ConnectionContext.https(SSL.createSSLContext)
   lazy val docker = Http().outgoingConnectionHttps(dockerHost.getHost, dockerHost.getPort, sslctx)
 
-  val mapper = new ObjectMapper()
-  mapper.registerModule(new DefaultScalaModule())
+  JsonMethods.mapper.configure(SerializationFeature.INDENT_OUTPUT, true)
 
-  def containers(containers: Containers = Containers()): Future[List[Container]] = {
+  def create(container: CreateContainer): Future[Container] = {
     var params = Map[String, String]()
 
-    containers.all match {
+    container.Name match {
+      case "" | null =>
+      case n => params += ("name" -> n)
+    }
+
+    val req = RequestBuilding.Post(
+      Uri(path = Uri.Path("/containers/create"), queryString = Some(Uri.Query(params).toString())),
+      container
+    )
+    request(req)
+      .flatMap(e => e.to[Map[String, AnyRef]])
+      .map(m => {
+        m("Warnings") match {
+          case null =>
+          case w => w.asInstanceOf[Seq[String]].foreach(logger.warn)
+        }
+        m("Id").asInstanceOf[String]
+      })
+      .flatMap(info)
+  }
+
+  def info(id: String): Future[Container] = {
+    request(RequestBuilding.Get(s"/containers/$id/json"))
+      .flatMap(e => e.to[Container])
+  }
+
+  def containers(all: Boolean = false,
+                 limit: Int = 0,
+                 since: String = null,
+                 before: String = null,
+                 size: Boolean = false,
+                 filters: Map[String, Seq[String]] = Map.empty): Future[List[Container]] = {
+    var params = Map[String, String]()
+
+    all match {
       case true => params += ("all" -> "true")
       case _ =>
     }
-    containers.limit match {
-      case l if l > 0 => params += ("limit" -> l.toString)
-      case _ =>
+    limit match {
+      case 0 =>
+      case l => params += ("limit" -> l.toString)
     }
-    containers.before match {
+    before match {
       case null =>
       case b => params += ("before" -> b)
     }
-    containers.since match {
+    since match {
       case null =>
       case s => params += ("since" -> s)
     }
-    containers.size match {
+    size match {
       case true => params += ("size" -> "true")
       case _ =>
     }
-    containers.filters match {
+    filters match {
       case m if m.isEmpty =>
-      case m => params += ("filters" -> mapper.writeValueAsString(m))
+      case m => params += ("filters" -> JsonMethods.mapper.writeValueAsString(m))
     }
 
     val req = RequestBuilding.Get(Uri(
@@ -69,24 +105,25 @@ class Docker(dockerHost: URI) {
       queryString = Some(Uri.Query(params).toString())
     ))
     request(req)
-      .flatMap(e => e.to[List[Map[String, AnyRef]]])
-      .map(l => l.map(m => map2container(m)))
+      .flatMap(e => e.to[List[Container]])
   }
 
-  def images(images: Images = Images()): Future[List[Image]] = {
+  def images(all: Boolean = false,
+             filter: String = null,
+             filters: Map[String, Seq[String]] = Map.empty): Future[List[Image]] = {
     var params = Map[String, String]()
 
-    images.all match {
+    all match {
       case true => params += ("all" -> "true")
       case _ =>
     }
-    images.filter match {
+    filter match {
       case null =>
       case f => params += ("filter" -> f)
     }
-    images.filters match {
+    filters match {
       case m if m.isEmpty =>
-      case m => params += ("filters" -> mapper.writeValueAsString(m))
+      case m => params += ("filters" -> JsonMethods.mapper.writeValueAsString(m))
     }
 
     val req = RequestBuilding.Get(Uri(
@@ -94,8 +131,7 @@ class Docker(dockerHost: URI) {
       queryString = Some(Uri.Query(params).toString())
     ))
     request(req)
-      .flatMap(e => e.to[List[Map[String, AnyRef]]])
-      .map(l => l.map(m => map2image(m)))
+      .flatMap(e => e.to[List[Image]])
   }
 
   def run(run: Run): ActorRef = {
@@ -107,8 +143,8 @@ class Docker(dockerHost: URI) {
       .via(docker)
       .runWith(Sink.head)
       .flatMap(resp => resp.status match {
-        case OK => Future.successful(Unmarshal(resp.entity))
-        case e@(ClientError(_) | ServerError(_)) => Future.failed(throw new RuntimeException(e.reason))
+        case Success(_) => Future.successful(Unmarshal(resp.entity))
+        case e@(ClientError(_) | ServerError(_)) => Future.failed(new RuntimeException(e.reason))
         case e => Future.failed(new RuntimeException(s"Unknown error $e"))
       })
   }
