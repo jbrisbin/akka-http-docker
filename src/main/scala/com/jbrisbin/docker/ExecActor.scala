@@ -11,19 +11,20 @@ import akka.stream.ActorMaterializer
 import akka.stream.actor.{ActorPublisher, ActorPublisherMessage}
 import akka.stream.scaladsl.Framing
 import de.heikoseeberger.akkahttpjson4s.Json4sSupport._
-import org.json4s.{DefaultFormats, Formats, Serialization, jackson}
+import org.json4s.{Formats, Serialization}
 
 /**
   * @author Jon Brisbin <jbrisbin@basho.com>
   */
 class ExecActor(docker: Docker,
                 containerId: String,
-                ex: Exec)(implicit val system: ActorSystem,
-                          implicit val materializer: ActorMaterializer)
-  extends Actor with ActorLogging with ActorPublisher[DockerMessage] {
-
-  implicit val formats: Formats = DefaultFormats
-  implicit val serialization: Serialization = jackson.Serialization
+                ex: Exec)
+               (implicit val system: ActorSystem,
+                implicit val materializer: ActorMaterializer,
+                implicit val formats: Formats,
+                implicit val serialization: Serialization) extends Actor
+                                                                   with ActorLogging
+                                                                   with ActorPublisher[DockerMessage] {
 
   import system.dispatcher
 

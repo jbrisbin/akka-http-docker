@@ -14,7 +14,8 @@ import akka.http.scaladsl.{ConnectionContext, Http}
 import akka.stream.ActorMaterializer
 import akka.stream.actor.ActorPublisher
 import akka.stream.scaladsl._
-import com.fasterxml.jackson.databind.SerializationFeature
+import com.fasterxml.jackson.databind.{ObjectMapper, SerializationFeature}
+import com.fasterxml.jackson.module.scala.DefaultScalaModule
 import de.heikoseeberger.akkahttpjson4s.Json4sSupport._
 import org.json4s.jackson.JsonMethods
 import org.json4s.{DefaultFormats, Formats, Serialization, jackson}
@@ -41,6 +42,9 @@ class Docker(dockerHost: URI) {
 
   lazy val sslctx = ConnectionContext.https(SSL.createSSLContext)
   lazy val docker = Http().outgoingConnectionHttps(dockerHost.getHost, dockerHost.getPort, sslctx)
+
+  val mapper = new ObjectMapper()
+  mapper.registerModule(DefaultScalaModule)
 
   JsonMethods.mapper.configure(SerializationFeature.INDENT_OUTPUT, true)
 
@@ -112,38 +116,6 @@ class Docker(dockerHost: URI) {
           false
         }
         case _ => false
-      })
-  }
-
-  /**
-    * Remove an individual container identified by a name or ID.
-    *
-    * @param container the id or name of the container to DELETE
-    * @param volumes   whether to delete volumes or not
-    * @param force     whether to force a shutdown of the container or not
-    * @return [[Either]] a boolean indicating success or a `String` indicating the failure reason
-    */
-  def remove(container: String,
-             volumes: Boolean = false,
-             force: Boolean = false): Future[Either[Boolean, String]] = {
-    var params = Map[String, String]()
-
-    volumes match {
-      case true => params += ("v" -> "true")
-      case _ =>
-    }
-    force match {
-      case true => params += ("force" -> "true")
-      case _ =>
-    }
-
-    val req = RequestBuilding.Delete(
-      Uri(path = /("containers") / container, queryString = Some(Uri.Query(params).toString()))
-    )
-    requestFirst(req)
-      .map(resp => resp.status match {
-        case NoContent => Left(true)
-        case e@(ClientError(_) | ServerError(_)) => Right(e.reason())
       })
   }
 
@@ -258,7 +230,7 @@ class Docker(dockerHost: URI) {
     }
     filters match {
       case m if m.isEmpty =>
-      case m => params += ("filters" -> JsonMethods.mapper.writeValueAsString(m))
+      case m => params += ("filters" -> mapper.writeValueAsString(m))
     }
 
     val req = RequestBuilding.Get(Uri(
@@ -352,10 +324,16 @@ class Docker(dockerHost: URI) {
 
 object Docker {
 
-  private val instance = Docker(System.getenv().getOrDefault("DOCKER_HOST", "https://127.0.0.1:2376"))
+  private val instance = Docker(System.getenv("DOCKER_HOST"))
 
   def apply(): Docker = instance
 
-  def apply(dockerHost: String) = new Docker(URI.create(dockerHost))
+  def apply(dockerHost: String) = {
+    val uri = URI.create(dockerHost match {
+      case null | "" => "https://localhost:2376"
+      case h => h
+    })
+    new Docker(uri)
+  }
 
 }

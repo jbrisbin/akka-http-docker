@@ -34,13 +34,37 @@ class DockerTests {
 
   @After
   def cleanup(): Unit = {
-    val cs = Await.result(Docker().containers(filters = Map("label" -> Seq("test=true"))), timeout.duration)
-    Docker().remove(Source.fromIterator(() => cs.iterator), volumes = true, force = true)
+    val cs = Await.result(
+      Docker().containers(all = true, filters = Map("label" -> Seq("test=true"))),
+      timeout.duration
+    )
+    Await.result(
+      Docker().remove(Source.fromIterator(() => cs.iterator), volumes = true, force = true),
+      timeout.duration
+    )
   }
 
   @Test
   def canListContainers() = {
     val containers = Await.result(Docker().containers(), timeout.duration)
+    log.debug("containers: {}", containers)
+
+    assertThat("Containers exist", containers.nonEmpty)
+  }
+
+  @Test
+  def canFilterContainerList() = {
+    Await.result(
+      Docker()
+        .create(CreateContainer(
+          Image = "alpine",
+          Labels = testLabels
+        )), timeout.duration
+    )
+    val containers = Await.result(
+      Docker().containers(all = true, filters = Map("label" -> Seq("test"))),
+      timeout.duration
+    )
     log.debug("containers: {}", containers)
 
     assertThat("Containers exist", containers.nonEmpty)
