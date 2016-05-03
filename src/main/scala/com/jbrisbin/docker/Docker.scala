@@ -1,11 +1,10 @@
 package com.jbrisbin.docker
 
 import java.net.URI
-import java.nio.ByteOrder
 
 import akka.NotUsed
 import akka.actor.ActorDSL._
-import akka.actor.{ActorRef, ActorSystem, Status}
+import akka.actor.{ActorRef, ActorSystem, Props}
 import akka.http.scaladsl.client.RequestBuilding
 import akka.http.scaladsl.model.StatusCodes._
 import akka.http.scaladsl.model.Uri.Path./
@@ -13,6 +12,7 @@ import akka.http.scaladsl.model._
 import akka.http.scaladsl.unmarshalling.Unmarshal
 import akka.http.scaladsl.{ConnectionContext, Http}
 import akka.stream.ActorMaterializer
+import akka.stream.actor.ActorPublisher
 import akka.stream.scaladsl._
 import com.fasterxml.jackson.databind.SerializationFeature
 import de.heikoseeberger.akkahttpjson4s.Json4sSupport._
@@ -129,6 +129,10 @@ class Docker(dockerHost: URI) {
       })
   }
 
+  def exec(container: String, ex: Exec): Source[ExecOutput, Unit] = {
+    Source.actorPublisher[ExecOutput](Props(new ExecActor(this, container, ex))).mapMaterializedValue(_ ! ex)
+  }
+
   def containers(all: Boolean = false,
                  limit: Int = 0,
                  since: String = null,
@@ -222,45 +226,13 @@ class Docker(dockerHost: URI) {
   }
 
   private[docker] def startContainerActor(containerId: String): ActorRef = {
-    actor(new Act {
+    actor(new Act with ActorPublisher[ExecOutput] {
       become {
         case None => context stop self
-        case ex: Exec => {
-          val replyTo = sender()
 
-          val req = RequestBuilding.Post(
-            Uri(path = /("containers") / containerId / "exec"),
-            ex
-          )
-          request(req)
-            .flatMap(e => e.to[Map[String, AnyRef]])
-            .map(m => {
-              logger.debug("created exec: {}", m)
+        case ex: Exec =>
+          exec(containerId, ex).runForeach(sender() ! _)
 
-              m.get("Warnings") match {
-                case None =>
-                case Some(w) => w.asInstanceOf[Seq[String]].foreach(logger.warn)
-              }
-
-              val execId = m("Id").asInstanceOf[String]
-
-              requestFirst(RequestBuilding.Post(Uri(path = /("exec") / execId / "start"), ExecStart()))
-                .map(resp => resp.status match {
-                  case OK => resp.entity.dataBytes
-                    .via(Framing.lengthField(4, 4, 1024 * 1024, ByteOrder.BIG_ENDIAN))
-                    .runForeach(bytes => {
-                      val outputType = bytes(0) match {
-                        case 1 => StdOut
-                        case 2 => StdErr
-                      }
-                      replyTo ! outputType(bytes.slice(8, bytes.length))
-                    })
-                  case e@(ClientError(_) | ServerError(_)) =>
-                    replyTo ! Status.Failure(new RuntimeException(e.reason))
-                    context stop self
-                })
-            })
-        }
         case msg => logger.warn("unknown message: {}", msg)
       }
     })

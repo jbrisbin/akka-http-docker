@@ -2,19 +2,18 @@ package com.jbrisbin.docker
 
 import java.nio.charset.Charset
 
-import akka.actor.ActorDSL._
 import akka.actor.ActorSystem
 import akka.pattern.ask
 import akka.stream.ActorMaterializer
-import akka.stream.scaladsl.{Sink, Framing, Source}
+import akka.stream.scaladsl.{Framing, Source}
 import akka.util.{ByteString, Timeout}
 import org.hamcrest.MatcherAssert._
 import org.hamcrest.Matchers._
-import org.junit.{After, Test}
+import org.junit.{Ignore, After, Test}
 import org.slf4j.LoggerFactory
 
+import scala.concurrent.Await
 import scala.concurrent.duration._
-import scala.concurrent.{Await, Future, Promise}
 
 /**
   * @author Jon Brisbin <jbrisbin@basho.com>
@@ -26,9 +25,10 @@ class DockerTests {
   val charset = Charset.defaultCharset().toString
   val testLabels = Some(Map("test" -> "true"))
 
+  implicit val timeout: Timeout = Timeout(30 seconds)
+
   implicit val system = ActorSystem("tests")
   implicit val materializer = ActorMaterializer()
-  implicit val timeout = Timeout(30 seconds)
 
   import system.dispatcher
 
@@ -60,7 +60,7 @@ class DockerTests {
   }
 
   @Test
-  def canStartContainer(): Unit = {
+  def canStartContainerUsingReactiveStreams(): Unit = {
     val docker = Docker()
 
     // Create and start a container
@@ -79,23 +79,50 @@ class DockerTests {
     log.debug("container: {}", container)
 
     // Interact with container via Actor
-    val p: Promise[Boolean] = Promise()
-    actor(new Act {
-      whenStarting {
-        container ! Exec(Seq("ls", "-la", "/bin/busybox"))
-      }
-      become {
+    val src = docker.exec("runtest", Exec(Seq("ls", "-la", "/bin/busybox")))
+      .map {
         case StdOut(bytes) => {
-          log.debug(bytes.decodeString(charset))
-          p.completeWith(Future.successful(true))
+          val str = bytes.decodeString(charset)
+          log.debug(str)
+          true
         }
-        case StdErr(bytes) => p.failure(new RuntimeException(bytes.decodeString(charset)))
-        case msg => p.failure(new RuntimeException(s"Unknown message $msg"))
+        case StdErr(bytes) => {
+          val str = bytes.decodeString(charset)
+          log.error(str)
+          false
+        }
       }
-    })
 
-    assertThat("Exec completes successfully", Await.result(p.future, timeout.duration))
+    assertThat("Exec completes successfully", Await.result(src.runFold(true)(_ | _), timeout.duration))
     assertThat("Container was stopped", Await.result(docker.stop("runtest"), timeout.duration))
+  }
+
+  @Ignore
+  @Test
+  def canStreamOutput(): Unit = {
+    val res = Await.result(
+      Docker()
+        .create(CreateContainer(
+          Image = "alpine",
+          Tty = true,
+          Cmd = Seq("/bin/cat")
+        ))
+        .flatMap(c => Docker().start(c.Id))
+        .flatMap(c => c ? Exec(Seq("ls", "-la", "/bin"))),
+      timeout.duration
+    )
+    log.debug("result: {}", res)
+
+    res match {
+      case StdOut(bytes) => {
+
+        Source.single(bytes)
+          .via(Framing.delimiter(ByteString('\n'), 1024 * 1024))
+          .runForeach(line => log.debug("line: {}", line))
+
+      }
+      case StdErr(bytes) => log.error(bytes.decodeString(charset))
+    }
   }
 
   @Test

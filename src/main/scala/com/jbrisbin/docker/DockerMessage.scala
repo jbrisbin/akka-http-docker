@@ -57,6 +57,7 @@ trait ExecOutput extends DockerMessage
 case class StdOut(bytes: ByteString) extends ExecOutput
 
 case class StdErr(bytes: ByteString) extends ExecOutput
+case class Complete() extends ExecOutput
 
 // Responses
 case class Port(PrivatePort: Int, PublicPort: Int, Type: String = "tcp")
