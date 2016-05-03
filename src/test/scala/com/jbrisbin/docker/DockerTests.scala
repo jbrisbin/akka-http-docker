@@ -9,7 +9,7 @@ import akka.stream.scaladsl.{Framing, Source}
 import akka.util.{ByteString, Timeout}
 import org.hamcrest.MatcherAssert._
 import org.hamcrest.Matchers._
-import org.junit.{Ignore, After, Test}
+import org.junit.{After, Ignore, Test}
 import org.slf4j.LoggerFactory
 
 import scala.concurrent.Await
@@ -34,7 +34,8 @@ class DockerTests {
 
   @After
   def cleanup(): Unit = {
-    Await.result(Docker().remove("runtest", volumes = true, force = true), timeout.duration)
+    val cs = Await.result(Docker().containers(filters = Map("label" -> Seq("test=true"))), timeout.duration)
+    Docker().remove(Source.fromIterator(() => cs.iterator), volumes = true, force = true)
   }
 
   @Test
@@ -60,7 +61,7 @@ class DockerTests {
   }
 
   @Test
-  def canStartContainerUsingReactiveStreams(): Unit = {
+  def canExecInContainer(): Unit = {
     val docker = Docker()
 
     // Create and start a container
@@ -78,7 +79,7 @@ class DockerTests {
     )
     log.debug("container: {}", container)
 
-    // Interact with container via Actor
+    // Interact with container via Source
     val src = docker.exec("runtest", Exec(Seq("ls", "-la", "/bin/busybox")))
       .map {
         case StdOut(bytes) => {
@@ -105,7 +106,8 @@ class DockerTests {
         .create(CreateContainer(
           Image = "alpine",
           Tty = true,
-          Cmd = Seq("/bin/cat")
+          Cmd = Seq("/bin/cat"),
+          Labels = testLabels
         ))
         .flatMap(c => Docker().start(c.Id))
         .flatMap(c => c ? Exec(Seq("ls", "-la", "/bin"))),

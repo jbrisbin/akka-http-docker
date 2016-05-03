@@ -66,6 +66,37 @@ class Docker(dockerHost: URI) {
       .flatMap(inspect)
   }
 
+  def remove(containers: Source[Container, _],
+             volumes: Boolean = false,
+             force: Boolean = false): Future[Boolean] = {
+    var params = Map[String, String]()
+
+    volumes match {
+      case true => params += ("v" -> "true")
+      case _ =>
+    }
+    force match {
+      case true => params += ("force" -> "true")
+      case _ =>
+    }
+
+    containers
+      .map(c => {
+        RequestBuilding.Delete(
+          Uri(path = /("containers") / c.Id, queryString = Some(Uri.Query(params).toString()))
+        )
+      })
+      .via(docker)
+      .runFold(true)((last, resp) => resp.status match {
+        case Success(_) => true
+        case e@(ClientError(_) | ServerError(_)) => {
+          logger.error(e.reason())
+          false
+        }
+        case _ => false
+      })
+  }
+
   def remove(container: String,
              volumes: Boolean = false,
              force: Boolean = false): Future[Either[Boolean, String]] = {
@@ -231,6 +262,7 @@ class Docker(dockerHost: URI) {
         case None => context stop self
 
         case ex: Exec =>
+          // TODO: Run a Fold here and gather output to send back to complete the ask Future
           exec(containerId, ex).runForeach(sender() ! _)
 
         case msg => logger.warn("unknown message: {}", msg)
