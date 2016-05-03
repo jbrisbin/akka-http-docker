@@ -23,7 +23,9 @@ import org.slf4j.LoggerFactory
 import scala.concurrent.Future
 
 /**
-  * @author Jon Brisbin <jbrisbin@basho.com>
+  * Docker client that uses the HTTP remote API to interact with the Docker daemon.
+  *
+  * @see [[https://docs.docker.com/engine/reference/api/docker_remote_api_v1.22]]
   */
 class Docker(dockerHost: URI) {
 
@@ -42,6 +44,12 @@ class Docker(dockerHost: URI) {
 
   JsonMethods.mapper.configure(SerializationFeature.INDENT_OUTPUT, true)
 
+  /**
+    * Create a Docker container described by the [[CreateContainer]].
+    *
+    * @param container describes how the container should be configured
+    * @return the results of an [[inspect()]], namely a [[Future]] of [[Container]]
+    */
   def create(container: CreateContainer): Future[Container] = {
     var params = Map[String, String]()
 
@@ -66,6 +74,16 @@ class Docker(dockerHost: URI) {
       .flatMap(inspect)
   }
 
+  /**
+    * Removes containers identified by their [[Container]] object.
+    *
+    * Used to chain this operation into a longer series of calls, where the list of [[Container]] is obtained from the daemon, probably using some filters applied.
+    *
+    * @param containers executes a DELETE for every [[Container]] in the source stream
+    * @param volumes    whether to delete volumes or not
+    * @param force      whether to force a shutdown of the container or not
+    * @return a boolean indicating overall success of all deletions
+    */
   def remove(containers: Source[Container, _],
              volumes: Boolean = false,
              force: Boolean = false): Future[Boolean] = {
@@ -97,6 +115,14 @@ class Docker(dockerHost: URI) {
       })
   }
 
+  /**
+    * Remove an individual container identified by a name or ID.
+    *
+    * @param container the id or name of the container to DELETE
+    * @param volumes   whether to delete volumes or not
+    * @param force     whether to force a shutdown of the container or not
+    * @return [[Either]] a boolean indicating success or a `String` indicating the failure reason
+    */
   def remove(container: String,
              volumes: Boolean = false,
              force: Boolean = false): Future[Either[Boolean, String]] = {
@@ -121,11 +147,24 @@ class Docker(dockerHost: URI) {
       })
   }
 
+  /**
+    * Inspect a container and gather metadata about it.
+    *
+    * @param container the name or ID of the container to inspect
+    * @return a [[Container]] that describes the container
+    */
   def inspect(container: String): Future[Container] = {
     request(RequestBuilding.Get(Uri(path = /("containers") / container / "json")))
       .flatMap(e => e.to[Container])
   }
 
+  /**
+    * Start a container.
+    *
+    * @param container  the name or ID of the container to start
+    * @param detachKeys configure the keys recognized to detach
+    * @return an [[ActorRef]] to which messages can be sent to interact with the running container
+    */
   def start(container: String, detachKeys: Option[String] = None): Future[ActorRef] = {
     var params = Map[String, String]()
 
@@ -141,6 +180,13 @@ class Docker(dockerHost: URI) {
       .map(ignored => startContainerActor(container))
   }
 
+  /**
+    * Stop a container.
+    *
+    * @param container the name or ID of the container to stop
+    * @param timeout   timeout after which the container will be killed
+    * @return `true`, indicating the container was stopped, `false` indicating it was *already* stopped, or a failure of the [[Future]] which indicates an error while trying to stop the container
+    */
   def stop(container: String, timeout: Option[Int] = None): Future[Boolean] = {
     var params = Map[String, String]()
 
@@ -160,10 +206,28 @@ class Docker(dockerHost: URI) {
       })
   }
 
+  /**
+    * Execute an operation in the context of a container.
+    *
+    * @param container the name or ID of the container
+    * @param ex        description of the execution to perform
+    * @return a [[Source]] which will have output published to it
+    */
   def exec(container: String, ex: Exec): Source[ExecOutput, Unit] = {
     Source.actorPublisher[ExecOutput](Props(new ExecActor(this, container, ex))).mapMaterializedValue(_ ! ex)
   }
 
+  /**
+    * List available containers.
+    *
+    * @param all     `true` to list all containers. Defaults to `false`.
+    * @param limit   Maximum number of containers to return. Defaults to `0`, which means everything.
+    * @param since   Only show containers created since the given container.
+    * @param before  Only show containers created before the given container.
+    * @param size    Show the size of the container as well.
+    * @param filters Filter the list by the provided filters.
+    * @return A [[Future]] that will eventually contain the `List` of [[Container]] that satisfies the query.
+    */
   def containers(all: Boolean = false,
                  limit: Int = 0,
                  since: String = null,
@@ -205,6 +269,14 @@ class Docker(dockerHost: URI) {
       .flatMap(e => e.to[List[Container]])
   }
 
+  /**
+    * List available images.
+    *
+    * @param all
+    * @param filter
+    * @param filters
+    * @return
+    */
   def images(all: Boolean = false,
              filter: String = null,
              filters: Map[String, Seq[String]] = Map.empty): Future[List[Image]] = {
@@ -231,6 +303,12 @@ class Docker(dockerHost: URI) {
       .flatMap(e => e.to[List[Image]])
   }
 
+  /**
+    * Run an image. Not yet implemented.
+    *
+    * @param run
+    * @return
+    */
   def run(run: Run): ActorRef = {
     null
   }
