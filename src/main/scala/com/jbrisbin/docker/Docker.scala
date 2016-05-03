@@ -1,17 +1,19 @@
 package com.jbrisbin.docker
 
 import java.net.URI
+import java.nio.ByteOrder
 
 import akka.NotUsed
 import akka.actor.ActorDSL._
-import akka.actor.{ActorRef, ActorSystem}
+import akka.actor.{ActorRef, ActorSystem, Status}
 import akka.http.scaladsl.client.RequestBuilding
 import akka.http.scaladsl.model.StatusCodes._
+import akka.http.scaladsl.model.Uri.Path./
 import akka.http.scaladsl.model._
 import akka.http.scaladsl.unmarshalling.Unmarshal
 import akka.http.scaladsl.{ConnectionContext, Http}
 import akka.stream.ActorMaterializer
-import akka.stream.scaladsl.{Framing, Sink, Source}
+import akka.stream.scaladsl._
 import com.fasterxml.jackson.databind.SerializationFeature
 import de.heikoseeberger.akkahttpjson4s.Json4sSupport._
 import org.json4s.jackson.JsonMethods
@@ -49,7 +51,7 @@ class Docker(dockerHost: URI) {
     }
 
     val req = RequestBuilding.Post(
-      Uri(path = Uri.Path("/containers/create"), queryString = Some(Uri.Query(params).toString())),
+      Uri(path = /("containers") / "create", queryString = Some(Uri.Query(params).toString())),
       container
     )
     request(req)
@@ -61,11 +63,33 @@ class Docker(dockerHost: URI) {
         }
         m("Id").asInstanceOf[String]
       })
-      .flatMap(info)
+      .flatMap(inspect)
   }
 
-  def info(container: String): Future[Container] = {
-    request(RequestBuilding.Get(s"/containers/$container/json"))
+  def remove(container: String, volumes: Boolean = false, force: Boolean = false): Future[Either[Boolean, String]] = {
+    var params = Map[String, String]()
+
+    volumes match {
+      case true => params += ("v" -> "true")
+      case _ =>
+    }
+    force match {
+      case true => params += ("force" -> "true")
+      case _ =>
+    }
+
+    val req = RequestBuilding.Delete(
+      Uri(path = /("containers") / container, queryString = Some(Uri.Query(params).toString()))
+    )
+    requestFirst(req)
+      .map(resp => resp.status match {
+        case NoContent => Left(true)
+        case e@(ClientError(_) | ServerError(_)) => Right(e.reason())
+      })
+  }
+
+  def inspect(container: String): Future[Container] = {
+    request(RequestBuilding.Get(Uri(path = /("containers") / container / "json")))
       .flatMap(e => e.to[Container])
   }
 
@@ -78,50 +102,10 @@ class Docker(dockerHost: URI) {
     }
 
     val req = RequestBuilding.Post(
-      Uri(path = Uri.Path(s"/containers/$container/start"), queryString = Some(Uri.Query(params).toString()))
+      Uri(path = /("containers") / container / "start", queryString = Some(Uri.Query(params).toString()))
     )
     request(req)
-      .map(ignored => actor(new Act {
-        become {
-          case exec: ExecCreate => {
-            val replyTo = sender()
-
-            val req = RequestBuilding.Post(
-              Uri(path = Uri.Path(s"/containers/$container/exec")),
-              exec
-            )
-            request(req)
-              .flatMap(e => e.to[Map[String, AnyRef]])
-              .map(m => {
-                logger.debug("created exec: {}", m)
-
-                m.get("Warnings") match {
-                  case None =>
-                  case Some(w) => w.asInstanceOf[Seq[String]].foreach(logger.warn)
-                }
-
-                val execId = m("Id").asInstanceOf[String]
-                requestStream(RequestBuilding.Post(s"/exec/$execId/start", ExecStart()))
-                  .runForeach(resp => {
-                    resp.status match {
-                      case OK => resp.entity.dataBytes
-                        .runForeach(bytes => {
-                          val buf = bytes.asByteBuffer
-                          val code = buf.get(0)
-                          val len = buf.getInt(4)
-                          val slice = bytes.slice(8, 8 + len)
-                          replyTo ! (code match {
-                            case 1 => StdOut(slice)
-                            case 2 => StdErr(slice)
-                          })
-                        })
-                      case e@(ClientError(_) | ServerError(_)) => Future.failed(new RuntimeException(e.reason))
-                    }
-                  })
-              })
-          }
-        }
-      }))
+      .map(ignored => startContainerActor(container))
   }
 
   def containers(all: Boolean = false,
@@ -158,7 +142,7 @@ class Docker(dockerHost: URI) {
     }
 
     val req = RequestBuilding.Get(Uri(
-      path = Uri.Path("/containers/json"),
+      path = /("containers") / "json",
       queryString = Some(Uri.Query(params).toString())
     ))
     request(req)
@@ -184,7 +168,7 @@ class Docker(dockerHost: URI) {
     }
 
     val req = RequestBuilding.Get(Uri(
-      path = Uri.Path("/images/json"),
+      path = /("images") / "json",
       queryString = Some(Uri.Query(params).toString())
     ))
     request(req)
@@ -208,9 +192,58 @@ class Docker(dockerHost: URI) {
       .flatMap(resp => resp.status match {
         case OK | Created => Future.successful(Unmarshal(resp.entity))
         case NoContent => Future.successful(null)
-        case e@(ClientError(_) | ServerError(_)) => Future.failed(new RuntimeException(e.reason))
+        case e@(ClientError(_) | ServerError(_)) => {
+          logger.error("Request failed: {}", req)
+          Future.failed(new RuntimeException(e.reason))
+        }
         case e => Future.failed(new RuntimeException(s"Unknown error $e"))
       })
+  }
+
+  private[docker] def startContainerActor(containerId: String): ActorRef = {
+    actor(new Act {
+      become {
+        case None => context stop self
+        case ex: Exec => {
+          val replyTo = sender()
+
+          val req = RequestBuilding.Post(
+            Uri(path = /("containers") / containerId / "exec"),
+            ex
+          )
+          request(req)
+            .flatMap(e => e.to[Map[String, AnyRef]])
+            .map(m => {
+              logger.debug("created exec: {}", m)
+
+              m.get("Warnings") match {
+                case None =>
+                case Some(w) => w.asInstanceOf[Seq[String]].foreach(logger.warn)
+              }
+
+              val execId = m("Id").asInstanceOf[String]
+
+              requestStream(RequestBuilding.Post(Uri(path = /("exec") / execId / "start"), ExecStart()))
+                .runWith(Sink.head)
+                .map(resp => resp.status match {
+                  case OK => resp.entity.dataBytes
+                    .via(Framing.lengthField(4, 4, 1024 * 1024, ByteOrder.BIG_ENDIAN))
+                    .runForeach(bytes => {
+                      val outputType = bytes(0) match {
+                        case 1 => StdOut
+                        case 2 => StdErr
+                      }
+                      replyTo ! outputType(bytes.slice(8, bytes.length))
+                    })
+                  case e@(ClientError(_) | ServerError(_)) =>
+                    replyTo ! Status.Failure(new RuntimeException(e.reason))
+                    context stop self
+                })
+            })
+        }
+        case msg => logger.warn("unknown message: {}", msg)
+      }
+    })
   }
 
 }

@@ -1,7 +1,6 @@
 package com.jbrisbin.docker
 
 import java.nio.charset.Charset
-import java.util.concurrent.{CompletableFuture, TimeUnit}
 
 import akka.actor.ActorDSL._
 import akka.actor.ActorSystem
@@ -9,11 +8,11 @@ import akka.stream.ActorMaterializer
 import akka.util.Timeout
 import org.hamcrest.MatcherAssert._
 import org.hamcrest.Matchers._
-import org.junit.Test
+import org.junit.{After, Test}
 import org.slf4j.LoggerFactory
 
-import scala.concurrent.Await
 import scala.concurrent.duration._
+import scala.concurrent.{Await, Future, Promise}
 
 /**
   * @author Jon Brisbin <jbrisbin@basho.com>
@@ -27,6 +26,11 @@ class DockerTests {
 
   implicit val timeout = Timeout(30 seconds)
 
+  @After
+  def cleanup(): Unit = {
+    Await.result(Docker().remove("runtest", volumes = true, force = true), timeout.duration)
+  }
+
   @Test
   def canListContainers() = {
     val containers = Await.result(Docker().containers(), timeout.duration)
@@ -39,6 +43,7 @@ class DockerTests {
   def canCreateContainer() = {
     val container = Await.result(Docker().create(
       CreateContainer(
+        Name = "runtest",
         Image = "alpine",
         Labels = testLabels
       )
@@ -49,7 +54,7 @@ class DockerTests {
   }
 
   @Test
-  def canStartContainer() = {
+  def canStartContainer(): Unit = {
     val docker = Docker()
 
     implicit val system = ActorSystem("tests")
@@ -60,25 +65,35 @@ class DockerTests {
     // Create and start a container
     val container = Await.result(
       docker
-        .create(CreateContainer(Cmd = Seq("/bin/cat"), Image = "alpine", Labels = testLabels, Tty = true))
+        .create(CreateContainer(
+          Name = "runtest",
+          Cmd = Seq("/bin/cat"),
+          Image = "alpine",
+          Labels = testLabels,
+          Tty = true
+        ))
         .flatMap(c => docker.start(c.Id)),
       timeout.duration
     )
     log.debug("container: {}", container)
 
-    val f: CompletableFuture[Boolean] = new CompletableFuture[Boolean]()
+    // Interact with container via Actor
+    val p: Promise[Boolean] = Promise()
     actor(new Act {
       whenStarting {
-        container ! ExecCreate(Seq("ls", "-la", "/bin/busybox"))
+        container ! Exec(Seq("ls", "-la", "/bin/busybox"))
       }
       become {
-        case StdOut(bytes) => f.complete(true)
-        case StdErr(bytes) => f.completeExceptionally(new RuntimeException(bytes.decodeString(charset)))
-        case msg => f.completeExceptionally(new RuntimeException(s"Unknown message $msg"))
+        case StdOut(bytes) => {
+          log.debug(bytes.decodeString(charset))
+          p.completeWith(Future.successful(true))
+        }
+        case StdErr(bytes) => p.failure(new RuntimeException(bytes.decodeString(charset)))
+        case msg => p.failure(new RuntimeException(s"Unknown message $msg"))
       }
     })
 
-    assertThat("Exec completes successfully", f.get(timeout.duration.toMillis, TimeUnit.MILLISECONDS))
+    assertThat("Exec completes successfully", Await.result(p.future, timeout.duration))
   }
 
   @Test

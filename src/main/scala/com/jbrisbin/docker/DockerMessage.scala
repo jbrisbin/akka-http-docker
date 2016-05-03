@@ -43,18 +43,19 @@ case class CreateContainer(Name: String = "",
 
 case class Run(image: String) extends DockerMessage
 
-case class ExecCreate(Cmd: Seq[String],
-                      AttachStdin: Boolean = false,
-                      AttachStdout: Boolean = true,
-                      AttachStderr: Boolean = true,
-                      DetachKeys: Option[String] = None,
-                      Tty: Boolean = false) extends DockerMessage
+case class Exec(Cmd: Seq[String],
+                AttachStdin: Boolean = false,
+                AttachStdout: Boolean = true,
+                AttachStderr: Boolean = true,
+                DetachKeys: Option[String] = None,
+                Tty: Boolean = false) extends DockerMessage
 
 case class ExecStart(Id: String = null, Detach: Boolean = false, Tty: Boolean = false) extends DockerMessage
 
-case class StdOut(bytes: ByteString) extends DockerMessage
+trait ExecOutput extends DockerMessage
+case class StdOut(bytes: ByteString) extends ExecOutput
 
-case class StdErr(bytes: ByteString) extends DockerMessage
+case class StdErr(bytes: ByteString) extends ExecOutput
 
 // Responses
 case class Port(PrivatePort: Int, PublicPort: Int, Type: String = "tcp")
