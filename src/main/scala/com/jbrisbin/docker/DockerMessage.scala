@@ -53,6 +53,7 @@ case class Exec(Cmd: Seq[String],
 case class ExecStart(Id: String = null, Detach: Boolean = false, Tty: Boolean = false) extends DockerMessage
 
 trait ExecOutput extends DockerMessage
+
 case class StdOut(bytes: ByteString) extends ExecOutput
 
 case class StdErr(bytes: ByteString) extends ExecOutput

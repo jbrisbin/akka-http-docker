@@ -4,8 +4,10 @@ import java.nio.charset.Charset
 
 import akka.actor.ActorDSL._
 import akka.actor.ActorSystem
+import akka.pattern.ask
 import akka.stream.ActorMaterializer
-import akka.util.Timeout
+import akka.stream.scaladsl.{Sink, Framing, Source}
+import akka.util.{ByteString, Timeout}
 import org.hamcrest.MatcherAssert._
 import org.hamcrest.Matchers._
 import org.junit.{After, Test}
@@ -24,7 +26,11 @@ class DockerTests {
   val charset = Charset.defaultCharset().toString
   val testLabels = Some(Map("test" -> "true"))
 
+  implicit val system = ActorSystem("tests")
+  implicit val materializer = ActorMaterializer()
   implicit val timeout = Timeout(30 seconds)
+
+  import system.dispatcher
 
   @After
   def cleanup(): Unit = {
@@ -56,11 +62,6 @@ class DockerTests {
   @Test
   def canStartContainer(): Unit = {
     val docker = Docker()
-
-    implicit val system = ActorSystem("tests")
-    implicit val materializer = ActorMaterializer()
-
-    import system.dispatcher
 
     // Create and start a container
     val container = Await.result(
@@ -94,6 +95,7 @@ class DockerTests {
     })
 
     assertThat("Exec completes successfully", Await.result(p.future, timeout.duration))
+    assertThat("Container was stopped", Await.result(docker.stop("runtest"), timeout.duration))
   }
 
   @Test

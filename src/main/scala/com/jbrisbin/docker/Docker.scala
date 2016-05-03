@@ -66,7 +66,9 @@ class Docker(dockerHost: URI) {
       .flatMap(inspect)
   }
 
-  def remove(container: String, volumes: Boolean = false, force: Boolean = false): Future[Either[Boolean, String]] = {
+  def remove(container: String,
+             volumes: Boolean = false,
+             force: Boolean = false): Future[Either[Boolean, String]] = {
     var params = Map[String, String]()
 
     volumes match {
@@ -106,6 +108,25 @@ class Docker(dockerHost: URI) {
     )
     request(req)
       .map(ignored => startContainerActor(container))
+  }
+
+  def stop(container: String, timeout: Option[Int] = None): Future[Boolean] = {
+    var params = Map[String, String]()
+
+    timeout match {
+      case Some(t) => params += ("t" -> t.toString)
+      case None =>
+    }
+
+    val req = RequestBuilding.Post(
+      Uri(path = /("containers") / container / "stop", queryString = Some(Uri.Query(params).toString()))
+    )
+    requestFirst(req)
+      .map(resp => resp.status match {
+        case NoContent => true
+        case NotModified => false
+        case e@(ClientError(_) | ServerError(_)) => throw new IllegalStateException(e.reason())
+      })
   }
 
   def containers(all: Boolean = false,
@@ -223,8 +244,7 @@ class Docker(dockerHost: URI) {
 
               val execId = m("Id").asInstanceOf[String]
 
-              requestStream(RequestBuilding.Post(Uri(path = /("exec") / execId / "start"), ExecStart()))
-                .runWith(Sink.head)
+              requestFirst(RequestBuilding.Post(Uri(path = /("exec") / execId / "start"), ExecStart()))
                 .map(resp => resp.status match {
                   case OK => resp.entity.dataBytes
                     .via(Framing.lengthField(4, 4, 1024 * 1024, ByteOrder.BIG_ENDIAN))
