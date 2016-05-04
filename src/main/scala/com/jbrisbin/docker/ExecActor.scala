@@ -47,6 +47,7 @@ class ExecActor(docker: Docker,
 
           docker.requestFirst(RequestBuilding.Post(Uri(path = /("exec") / execId / "start"), ExecStart()))
             .map(resp => resp.status match {
+
               case OK => resp.entity.dataBytes
                 .via(Framing.lengthField(4, 4, 1024 * 1024, ByteOrder.BIG_ENDIAN))
                 .runForeach(bytes => {
@@ -56,9 +57,15 @@ class ExecActor(docker: Docker,
                   }
                   onNext(outputType(bytes.slice(8, bytes.length)))
                 })
-                .onComplete(ignored => onCompleteThenStop())
-              case e@(ClientError(_) | ServerError(_)) =>
+                .onComplete {
+                  case _ if isActive => onCompleteThenStop()
+                }
+
+              case e@(ClientError(_) | ServerError(_)) if !isErrorEmitted =>
                 onErrorThenStop(new IllegalStateException(e.reason()))
+
+              case msg => log.error("Unknown message {}", msg)
+
             })
         })
 
