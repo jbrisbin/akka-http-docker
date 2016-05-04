@@ -46,7 +46,7 @@ class DockerTests {
 
   @Test
   def canListContainers() = {
-    val containers = Await.result(Docker().containers(), timeout.duration)
+    val containers = Await.result(Docker().containers(all = true), timeout.duration)
     log.debug("containers: {}", containers)
 
     assertThat("Containers exist", containers.nonEmpty)
