@@ -5,11 +5,11 @@ import java.nio.charset.Charset
 import akka.actor.ActorSystem
 import akka.pattern.ask
 import akka.stream.ActorMaterializer
-import akka.stream.scaladsl.{Framing, Source}
+import akka.stream.scaladsl.Source
 import akka.util.{ByteString, Timeout}
 import org.hamcrest.MatcherAssert._
 import org.hamcrest.Matchers._
-import org.junit.{After, Ignore, Test}
+import org.junit.{After, Test}
 import org.slf4j.LoggerFactory
 
 import scala.concurrent.Await
@@ -58,6 +58,7 @@ class DockerTests {
       Docker()
         .create(CreateContainer(
           Image = "alpine",
+          Cmd = Some(Seq("/bin/sh")),
           Labels = testLabels
         )), timeout.duration
     )
@@ -76,6 +77,7 @@ class DockerTests {
       CreateContainer(
         Name = "runtest",
         Image = "alpine",
+        Cmd = Some(Seq("/bin/sh")),
         Labels = testLabels
       )
     ), timeout.duration)
@@ -93,7 +95,7 @@ class DockerTests {
       docker
         .create(CreateContainer(
           Name = "runtest",
-          Cmd = Seq("/bin/cat"),
+          Cmd = Some(Seq("/bin/cat")),
           Image = "alpine",
           Labels = testLabels,
           Tty = true
@@ -122,7 +124,7 @@ class DockerTests {
     assertThat("Container was stopped", Await.result(docker.stop("runtest"), timeout.duration))
   }
 
-  @Ignore
+  //  @Ignore
   @Test
   def canStreamOutput(): Unit = {
     val res = Await.result(
@@ -130,25 +132,26 @@ class DockerTests {
         .create(CreateContainer(
           Image = "alpine",
           Tty = true,
-          Cmd = Seq("/bin/cat"),
+          Cmd = Some(Seq("/bin/cat")),
           Labels = testLabels
         ))
         .flatMap(c => Docker().start(c.Id))
         .flatMap(c => c ? Exec(Seq("ls", "-la", "/bin"))),
       timeout.duration
     )
-    log.debug("result: {}", res)
+    //log.debug("result: {}", res)
 
-    res match {
-      case StdOut(bytes) => {
-
-        Source.single(bytes)
-          .via(Framing.delimiter(ByteString('\n'), 1024 * 1024))
-          .runForeach(line => log.debug("line: {}", line))
-
+    val count = res match {
+      case stdout: ByteString => {
+        stdout
+          .decodeString(charset)
+          .split("\n")
+          .filter(s => s.contains("uname"))
+          .foldRight(0)((line, count) => count + 1)
       }
-      case StdErr(bytes) => log.error(bytes.decodeString(charset))
     }
+
+    assertThat("uname command was found with ls", count > 0)
   }
 
   @Test

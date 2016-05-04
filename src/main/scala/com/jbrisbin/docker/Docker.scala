@@ -1,10 +1,11 @@
 package com.jbrisbin.docker
 
 import java.net.URI
+import java.nio.charset.Charset
 
 import akka.NotUsed
 import akka.actor.ActorDSL._
-import akka.actor.{ActorRef, ActorSystem, Props}
+import akka.actor.{ActorRef, ActorSystem, Props, Status}
 import akka.http.scaladsl.client.RequestBuilding
 import akka.http.scaladsl.model.StatusCodes._
 import akka.http.scaladsl.model.Uri.Path./
@@ -14,6 +15,7 @@ import akka.http.scaladsl.{ConnectionContext, Http}
 import akka.stream.ActorMaterializer
 import akka.stream.actor.ActorPublisher
 import akka.stream.scaladsl._
+import akka.util.ByteString
 import com.fasterxml.jackson.databind.{ObjectMapper, SerializationFeature}
 import com.fasterxml.jackson.module.scala.DefaultScalaModule
 import de.heikoseeberger.akkahttpjson4s.Json4sSupport._
@@ -31,6 +33,7 @@ import scala.concurrent.Future
 class Docker(dockerHost: URI) {
 
   val logger = LoggerFactory.getLogger(classOf[Docker])
+  val charset = Charset.defaultCharset().toString
 
   implicit val system = ActorSystem("docker")
   implicit val materializer = ActorMaterializer()
@@ -312,8 +315,22 @@ class Docker(dockerHost: URI) {
         case None => context stop self
 
         case ex: Exec =>
-          // TODO: Run a Fold here and gather output to send back to complete the ask Future
-          exec(containerId, ex).runForeach(sender() ! _)
+          val replyTo = sender()
+
+          exec(containerId, ex)
+            .runFold((StdOut(ByteString()): StdOut, StdErr(ByteString()): StdErr))((acc, output) => {
+              output match {
+                case StdOut(bytes) => (StdOut(acc._1.bytes ++ bytes), acc._2)
+                case StdErr(bytes) => (acc._1, StdErr(acc._2.bytes ++ bytes))
+              }
+            })
+            .onSuccess {
+              case (stdout, stderr) if stderr.bytes.isEmpty => replyTo ! stdout.bytes
+              case (stdout, stderr) if stdout.bytes.isEmpty => {
+                val msg = stderr.bytes.decodeString(charset)
+                replyTo ! Status.Failure(new IllegalStateException(msg))
+              }
+            }
 
         case msg => logger.warn("unknown message: {}", msg)
       }

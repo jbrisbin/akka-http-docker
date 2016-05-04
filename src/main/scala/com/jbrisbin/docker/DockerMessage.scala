@@ -29,7 +29,7 @@ case class CreateContainer(Name: String = "",
                            OpenStdin: Boolean = false,
                            StdinOnce: Boolean = false,
                            Env: Option[Seq[String]] = None,
-                           Cmd: Seq[String] = Seq("/bin/sh"),
+                           Cmd: Option[Seq[String]] = None,
                            Entrypoint: Option[String] = None,
                            Image: String,
                            Labels: Option[Map[String, String]] = None,
@@ -57,6 +57,7 @@ trait ExecOutput extends DockerMessage
 case class StdOut(bytes: ByteString) extends ExecOutput
 
 case class StdErr(bytes: ByteString) extends ExecOutput
+
 case class Complete() extends ExecOutput
 
 // Responses
