@@ -16,7 +16,9 @@ case class HostConfig(Binds: Option[Seq[String]] = None,
                       MemoryReservation: Option[BigInt] = None,
                       KernelMemory: Option[BigInt] = None,
                       CpuShares: Option[BigInt] = None,
-                      CpuPeriod: Option[BigInt] = None)
+                      CpuPeriod: Option[BigInt] = None,
+                      PortBindings: Option[Map[String, Seq[Map[String, String]]]] = None,
+                      PublishAllPorts: Boolean = true)
 
 case class CreateContainer(Name: String = "",
                            Hostname: Option[String] = None,
@@ -43,12 +45,14 @@ case class CreateContainer(Name: String = "",
 
 case class Run(image: String) extends DockerMessage
 
+case class Stop() extends DockerMessage
+
 case class Exec(Cmd: Seq[String],
                 AttachStdin: Boolean = false,
                 AttachStdout: Boolean = true,
                 AttachStderr: Boolean = true,
                 DetachKeys: Option[String] = None,
-                Tty: Boolean = false) extends DockerMessage
+                Tty: Boolean = true) extends DockerMessage
 
 case class ExecStart(Id: String = null, Detach: Boolean = false, Tty: Boolean = false) extends DockerMessage
 

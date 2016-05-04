@@ -312,7 +312,17 @@ class Docker(dockerHost: URI) {
   private[docker] def startContainerActor(containerId: String): ActorRef = {
     actor(new Act with ActorPublisher[ExecOutput] {
       become {
-        case None => context stop self
+        case Stop() => {
+          val replyTo = sender()
+
+          stop(containerId) onComplete {
+            case util.Success(_) =>
+              replyTo ! containerId
+            case util.Failure(_) =>
+              replyTo ! Status.Failure(new IllegalStateException(s"Container $containerId not stopped"))
+          }
+          context stop self
+        }
 
         case ex: Exec =>
           val replyTo = sender()
