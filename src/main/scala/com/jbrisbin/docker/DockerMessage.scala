@@ -54,7 +54,9 @@ case class Exec(Cmd: Seq[String],
                 DetachKeys: Option[String] = None,
                 Tty: Boolean = true) extends DockerMessage
 
-case class ExecStart(Id: String = null, Detach: Boolean = false, Tty: Boolean = false) extends DockerMessage
+case class ExecStart(Id: String = null,
+                     Detach: Boolean = false,
+                     Tty: Boolean = false) extends DockerMessage
 
 trait ExecOutput extends DockerMessage
 
@@ -94,6 +96,51 @@ case class Container(Id: String = null,
                      SizeRootFs: Option[Long] = None,
                      HostConfig: Map[String, String] = Map.empty,
                      NetworkSettings: NetworkSettings) extends DockerMessage
+
+case class ContainerState(Status: String = null,
+                          Running: Boolean = false,
+                          Paused: Boolean = false,
+                          Restarting: Boolean = false,
+                          OOMKilled: Boolean = false,
+                          Dead: Boolean = false,
+                          Pid: Int = 0,
+                          ExitCode: Int = 0,
+                          Error: String = null,
+                          StartedAt: String = null,
+                          FinishedAt: String = null) extends DockerMessage
+
+case class ContainerConfig(Hostname: String = null,
+                           Domainname: String = null,
+                           User: String = null,
+                           AttachStdin: Boolean = false,
+                           AttachStdout: Boolean = true,
+                           AttachStderr: Boolean = true,
+                           ExposedPorts: Map[String, Port] = Map.empty,
+                           Tty: Boolean = true,
+                           OpenStdin: Boolean = false,
+                           StdinOnce: Boolean = false,
+                           Env: Seq[String] = Seq.empty,
+                           Cmd: Seq[String] = Seq.empty,
+                           Image: String = null,
+                           Volumes: Map[String, String] = Map.empty) extends DockerMessage
+
+case class ContainerInfo(Id: String = null,
+                         Name: String = null,
+                         Path: String = null,
+                         Args: Seq[String] = Seq.empty,
+                         Created: Long = 0,
+                         State: ContainerState = null,
+                         Image: String = null,
+                         RestartCount: Int = 0,
+                         Driver: String = null,
+                         MountLabel: String = null,
+                         ProcessLabel: String = null,
+                         AppArmorProfile: String = null,
+                         ExecIDs: Option[AnyRef] = None,
+                         HostConfig: HostConfig = null,
+                         Mounts: Seq[Map[String, AnyRef]] = null,
+                         Config:ContainerConfig=null,
+                         NetworkSettings: NetworkSettings = null) extends DockerMessage
 
 case class Image(Id: String,
                  ParentId: String,

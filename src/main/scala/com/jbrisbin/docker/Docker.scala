@@ -23,7 +23,8 @@ import org.json4s.jackson.JsonMethods
 import org.json4s.{DefaultFormats, Formats, Serialization, jackson}
 import org.slf4j.LoggerFactory
 
-import scala.concurrent.Future
+import scala.concurrent.{Await, Future}
+import scala.concurrent.duration.Duration
 
 /**
   * Docker client that uses the HTTP remote API to interact with the Docker daemon.
@@ -57,7 +58,7 @@ class Docker(dockerHost: URI) {
     * @param container describes how the container should be configured
     * @return the results of an [[inspect()]], namely a [[Future]] of [[Container]]
     */
-  def create(container: CreateContainer): Future[Container] = {
+  def create(container: CreateContainer): Future[ContainerInfo] = {
     var params = Map[String, String]()
 
     container.Name match {
@@ -128,9 +129,9 @@ class Docker(dockerHost: URI) {
     * @param container the name or ID of the container to inspect
     * @return a [[Container]] that describes the container
     */
-  def inspect(container: String): Future[Container] = {
+  def inspect(container: String): Future[ContainerInfo] = {
     request(RequestBuilding.Get(Uri(path = /("containers") / container / "json")))
-      .flatMap(e => e.to[Container])
+      .flatMap(e => e.to[ContainerInfo])
   }
 
   /**
@@ -289,7 +290,12 @@ class Docker(dockerHost: URI) {
   }
 
   private[docker] def requestStream(req: HttpRequest): Source[HttpResponse, NotUsed] = {
-    Source.single(req).via(docker)
+    Source.single(req)
+      .map(req => {
+        logger.debug(req.toString())
+        req
+      })
+      .via(docker)
   }
 
   private[docker] def requestFirst(req: HttpRequest): Future[HttpResponse] = {
@@ -302,15 +308,16 @@ class Docker(dockerHost: URI) {
         case OK | Created => Future.successful(Unmarshal(resp.entity))
         case NoContent => Future.successful(null)
         case e@(ClientError(_) | ServerError(_)) => {
-          logger.error("Request failed: {}", req)
-          Future.failed(new RuntimeException(e.reason))
+          logger.error("Request failed: {}", resp)
+          val msg = Await.result(resp.entity.dataBytes.runFold(ByteString.empty)((buff,bytes) => buff ++ bytes), Duration.Inf)
+          Future.failed(new RuntimeException(msg.decodeString(charset)))
         }
         case e => Future.failed(new RuntimeException(s"Unknown error $e"))
       })
   }
 
   private[docker] def startContainerActor(containerId: String): ActorRef = {
-    actor(new Act with ActorPublisher[ExecOutput] {
+    system.actorOf(Props(new Act with ActorPublisher[ExecOutput] {
       become {
         case Stop() => {
           val replyTo = sender()
@@ -344,7 +351,7 @@ class Docker(dockerHost: URI) {
 
         case msg => logger.warn("unknown message: {}", msg)
       }
-    })
+    }), containerId)
   }
 
 }
