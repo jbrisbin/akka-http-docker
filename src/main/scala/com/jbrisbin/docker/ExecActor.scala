@@ -57,7 +57,7 @@ class ExecActor(docker: Docker,
                   }
                   onNext(outputType(bytes.slice(8, bytes.length)))
                 })
-                .onComplete {
+                .onSuccess {
                   case _ if isActive => onCompleteThenStop()
                 }
 
