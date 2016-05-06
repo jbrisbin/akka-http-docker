@@ -31,7 +31,7 @@ The API will be simple in order to express the maximum amount of information wit
 
 ```scala
 Docker().containers() onComplete {
-  case Success(c) => c.map(_.id)
+  case Success(c) => c.map(_.Id)
   case Failure(ex) => log.error(ex.getMessage, ex)
 }
 ```
