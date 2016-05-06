@@ -10,6 +10,37 @@ lazy val akkaHttpDocker = (project in file("."))
     name := "akka-http-docker",
     version := "0.1.0-SNAPSHOT",
 
+    publishMavenStyle := true,
+    publishTo := {
+      val nexus = "https://oss.sonatype.org/"
+      if (isSnapshot.value)
+        Some("snapshots" at nexus + "content/repositories/snapshots")
+      else
+        Some("releases" at nexus + "service/local/staging/deploy/maven2")
+    },
+    pomIncludeRepository := { _ => false },
+    pomExtra := (
+                <url>https://github.com/jbrisbin/akka-http-docker/</url>
+                  <licenses>
+                    <license>
+                      <name>Apache-2.0</name>
+                      <url>https://opensource.org/licenses/Apache-2.0</url>
+                      <distribution>repo</distribution>
+                    </license>
+                  </licenses>
+                  <scm>
+                    <url>git@github.com:jbrisbin/akka-http-docker.git</url>
+                    <connection>scm:git:git@github.com:jbrisbin/akka-http-docker.git</connection>
+                  </scm>
+                  <developers>
+                    <developer>
+                      <id>jbrisbin</id>
+                      <name>Jon Brisbin</name>
+                      <url>http://jbrisbin.com</url>
+                    </developer>
+                  </developers>
+                ),
+
     resolvers ++= Seq(
       Resolver.bintrayRepo("hseeberger", "maven")
     ),
