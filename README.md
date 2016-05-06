@@ -8,6 +8,23 @@ Use SBT:
 
     $ sbt package
     
+### Including as a Dependency
+
+To include the `akka-http-docker` in your project as a dependency, use the Sonatype Snapshot repositories:
+
+```scala
+resolvers ++= Seq(
+  Resolver.sonatypeRepo("snapshots")
+),
+
+libraryDependencies ++= {
+  Seq(
+    // Akka HTTP Docker
+    "com.jbrisbin.docker" %% "akka-http-docker" % "0.1.0-SNAPSHOT"
+  )
+}
+```
+    
 ### Using
 
 The API will be simple in order to express the maximum amount of information with the least amount of static. To list all containers, and map the IDs of those containers to another processing chain, you would do the following:
