@@ -70,8 +70,6 @@ lazy val akkaHttpDocker = (project in file("."))
         "org.bouncycastle" % "bcpkix-jdk15on" % "1.54",
 
         // Testing
-        "junit" % "junit" % junitVersion % "test",
-        "org.hamcrest" % "hamcrest-library" % "1.3" % "test",
         "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
         "ch.qos.logback" % "logback-classic" % "1.1.7" % "test"
       )
