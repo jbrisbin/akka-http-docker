@@ -52,6 +52,7 @@ case class Exec(Cmd: Seq[String],
                 AttachStdout: Boolean = true,
                 AttachStderr: Boolean = true,
                 DetachKeys: Option[String] = None,
+                Detach: Boolean = false,
                 Tty: Boolean = true) extends DockerMessage
 
 case class ExecStart(Id: String = null,
