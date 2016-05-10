@@ -50,8 +50,6 @@ class Docker(dockerHost: URI) {
   val mapper = new ObjectMapper()
   mapper.registerModule(DefaultScalaModule)
 
-  JsonMethods.mapper.configure(SerializationFeature.INDENT_OUTPUT, true)
-
   /**
     * Create a Docker container described by the [[CreateContainer]].
     *
