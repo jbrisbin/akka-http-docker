@@ -91,37 +91,36 @@ class DockerTests {
     val docker = Docker()
 
     // Create and start a container
-    val container = Await.result(
-      docker
-        .create(CreateContainer(
-          Name = "runtest",
-          Cmd = Some(Seq("/bin/cat")),
-          Image = "alpine",
-          Labels = testLabels,
-          Tty = true
-        ))
-        .flatMap(c => docker.start(c.Id)),
+    val create = CreateContainer(
+      Cmd = Some(Seq("/bin/cat")),
+      Image = "alpine",
+      Labels = testLabels,
+      Tty = true
+    )
+    val success = Await.result(
+      for {
+        ci <- docker.create(create)
+        ref <- docker.start(ci.Id)
+        exec <- docker.exec(ci.Id, Exec(Seq("ls", "-la", "/bin/busybox"))).map {
+          case StdOut(bytes) => {
+            val str = bytes.decodeString(charset)
+            log.debug(str)
+            true
+          }
+          case StdErr(bytes) => {
+            val str = bytes.decodeString(charset)
+            log.error(str)
+            false
+          }
+        }.runFold(true)(_ | _)
+        stop <- docker.stop(ci.Id)
+      } yield {
+        exec
+      },
       timeout.duration
     )
-    log.debug("container: {}", container)
 
-    // Interact with container via Source
-    val src = docker.exec("runtest", Exec(Seq("ls", "-la", "/bin/busybox")))
-      .map {
-        case StdOut(bytes) => {
-          val str = bytes.decodeString(charset)
-          log.debug(str)
-          true
-        }
-        case StdErr(bytes) => {
-          val str = bytes.decodeString(charset)
-          log.error(str)
-          false
-        }
-      }
-
-    assertThat("Exec completes successfully", Await.result(src.runFold(true)(_ | _), timeout.duration))
-    assertThat("Container was stopped", Await.result(docker.stop("runtest"), timeout.duration))
+    assertThat("Exec completes successfully", success)
   }
 
   //  @Ignore
