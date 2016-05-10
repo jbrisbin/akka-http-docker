@@ -45,7 +45,8 @@ class ExecActor(docker: Docker,
           }
           val execId = m("Id").asInstanceOf[String]
 
-          docker.requestFirst(RequestBuilding.Post(Uri(path = /("exec") / execId / "start"), ExecStart()))
+          docker
+            .requestFirst(RequestBuilding.Post(Uri(path = /("exec") / execId / "start"), ExecStart(Detach = ex.Detach)))
             .map(resp => resp.status match {
 
               case OK => resp.entity.dataBytes
