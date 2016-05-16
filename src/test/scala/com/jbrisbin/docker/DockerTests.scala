@@ -25,28 +25,28 @@ class DockerTests {
   val charset = Charset.defaultCharset().toString
   val testLabels = Some(Map("test" -> "true"))
 
-  implicit val timeout: Timeout = Timeout(30 seconds)
-
   implicit val system = ActorSystem("tests")
   implicit val materializer = ActorMaterializer()
+  implicit val timeout: Timeout = Timeout(30 seconds)
 
   import system.dispatcher
 
+  val docker = Docker()
+
   @After
   def cleanup(): Unit = {
-    val cs = Await.result(
-      Docker().containers(all = true, filters = Map("label" -> Seq("test=true"))),
-      timeout.duration
-    )
     Await.result(
-      Docker().remove(Source.fromIterator(() => cs.iterator), volumes = true, force = true),
+      for {
+        containers <- docker.containers(all = true, filters = Map("label" -> Seq("test=true")))
+        done <- docker.remove(containers = Source(containers), volumes = true, force = true)
+      } yield done,
       timeout.duration
     )
   }
 
   @Test
   def canListContainers() = {
-    val containers = Await.result(Docker().containers(all = true), timeout.duration)
+    val containers = Await.result(docker.containers(all = true), timeout.duration)
     log.debug("containers: {}", containers)
 
     assertThat("Containers exist", containers.nonEmpty)
@@ -55,15 +55,16 @@ class DockerTests {
   @Test
   def canFilterContainerList() = {
     Await.result(
-      Docker()
+      docker
         .create(CreateContainer(
           Image = "alpine",
           Cmd = Some(Seq("/bin/sh")),
           Labels = testLabels
-        )), timeout.duration
+        )),
+      timeout.duration
     )
     val containers = Await.result(
-      Docker().containers(all = true, filters = Map("label" -> Seq("test"))),
+      docker.containers(all = true, filters = Map("label" -> Seq("test"))),
       timeout.duration
     )
     log.debug("containers: {}", containers)
@@ -73,14 +74,18 @@ class DockerTests {
 
   @Test
   def canCreateContainer() = {
-    val container = Await.result(Docker().create(
-      CreateContainer(
-        Name = "runtest",
-        Image = "alpine",
-        Cmd = Some(Seq("/bin/sh")),
-        Labels = testLabels
-      )
-    ), timeout.duration)
+    val container = Await.result(
+      docker
+        .create(
+          CreateContainer(
+            Name = "runtest",
+            Image = "alpine",
+            Cmd = Some(Seq("/bin/sh")),
+            Labels = testLabels
+          )
+        ),
+      timeout.duration
+    )
     log.debug("container: {}", container)
 
     assertThat("Container was created", container.Id, notNullValue())
@@ -88,8 +93,6 @@ class DockerTests {
 
   @Test
   def canExecInContainer(): Unit = {
-    val docker = Docker()
-
     // Create and start a container
     val create = CreateContainer(
       Cmd = Some(Seq("/bin/cat")),
@@ -127,14 +130,14 @@ class DockerTests {
   @Test
   def canStreamOutput(): Unit = {
     val res = Await.result(
-      Docker()
+      docker
         .create(CreateContainer(
           Image = "alpine",
           Tty = true,
           Cmd = Some(Seq("/bin/cat")),
           Labels = testLabels
         ))
-        .flatMap(c => Docker().start(c.Id))
+        .flatMap(c => docker.start(c.Id))
         .flatMap(c => c ? Exec(Seq("ls", "-la", "/bin"))),
       timeout.duration
     )
@@ -155,7 +158,7 @@ class DockerTests {
 
   @Test
   def canListImages() = {
-    val images = Await.result(Docker().images(), timeout.duration)
+    val images = Await.result(docker.images(), timeout.duration)
     log.debug("images: {}", images)
 
     assertThat("Images exist", images.nonEmpty)

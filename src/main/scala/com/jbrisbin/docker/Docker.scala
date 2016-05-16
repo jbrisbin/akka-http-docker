@@ -1,7 +1,9 @@
 package com.jbrisbin.docker
 
 import java.net.URI
+import java.nio.ByteOrder
 import java.nio.charset.Charset
+import javax.net.ssl.SSLContext
 
 import akka.NotUsed
 import akka.actor.ActorDSL._
@@ -23,32 +25,30 @@ import org.json4s.jackson.JsonMethods
 import org.json4s.{DefaultFormats, Formats, Serialization, jackson}
 import org.slf4j.LoggerFactory
 
-import scala.concurrent.{Await, Future}
-import scala.concurrent.duration.Duration
+import scala.concurrent.{ExecutionContext, Future}
 
 /**
   * Docker client that uses the HTTP remote API to interact with the Docker daemon.
   *
   * @see [[https://docs.docker.com/engine/reference/api/docker_remote_api_v1.22]]
   */
-class Docker(dockerHost: URI) {
-
-  val logger = LoggerFactory.getLogger(classOf[Docker])
-  val charset = Charset.defaultCharset().toString
-
-  implicit val system = ActorSystem("docker")
-  implicit val materializer = ActorMaterializer()
+class Docker(dockerHost: URI, sslctx: SSLContext)
+            (implicit val system: ActorSystem,
+             implicit val materializer: ActorMaterializer,
+             implicit val execCtx: ExecutionContext) {
 
   implicit val formats: Formats = DefaultFormats
   implicit val serialization: Serialization = jackson.Serialization
 
-  import system.dispatcher
-
-  lazy val sslctx = ConnectionContext.https(SSL.createSSLContext)
-  lazy val docker = Http().outgoingConnectionHttps(dockerHost.getHost, dockerHost.getPort, sslctx)
-
-  val mapper = new ObjectMapper()
-  mapper.registerModule(DefaultScalaModule)
+  val logger = LoggerFactory.getLogger(classOf[Docker])
+  val charset = Charset.defaultCharset().toString
+  val mapper = {
+    val m = new ObjectMapper()
+    m.registerModule(DefaultScalaModule)
+    m.configure(SerializationFeature.INDENT_OUTPUT, true)
+    m
+  }
+  val docker = Http().outgoingConnectionHttps(dockerHost.getHost, dockerHost.getPort, ConnectionContext.https(sslctx))
 
   /**
     * Create a Docker container described by the [[CreateContainer]].
@@ -65,19 +65,20 @@ class Docker(dockerHost: URI) {
     }
 
     val req = RequestBuilding.Post(
-      Uri(path = /("containers") / "create", queryString = Some(Uri.Query(params).toString())),
+      Uri(path = /("containers") / "create", queryString = Some(Uri.Query(params).toString)),
       container
     )
     request(req)
-      .flatMap(e => e.to[Map[String, AnyRef]])
+      .mapAsync(1)(_.to[Map[String, AnyRef]])
       .map(m => {
-        m("Warnings") match {
-          case null =>
-          case w => w.asInstanceOf[Seq[String]].foreach(logger.warn)
+        m.get("Warnings") match {
+          case None | Some(null) =>
+          case Some(w) => w.asInstanceOf[Seq[String]].foreach(logger.warn)
         }
         m("Id").asInstanceOf[String]
       })
-      .flatMap(inspect)
+      .mapAsync(1)(inspect)
+      .runWith(Sink.head)
   }
 
   /**
@@ -95,19 +96,16 @@ class Docker(dockerHost: URI) {
              force: Boolean = false): Future[Boolean] = {
     var params = Map[String, String]()
 
-    volumes match {
-      case true => params += ("v" -> "true")
-      case _ =>
-    }
-    force match {
-      case true => params += ("force" -> "true")
-      case _ =>
-    }
+    if (volumes)
+      params += ("v" -> "true")
+
+    if (force)
+      params += ("force" -> "true")
 
     containers
       .map(c => {
         RequestBuilding.Delete(
-          Uri(path = /("containers") / c.Id, queryString = Some(Uri.Query(params).toString()))
+          Uri(path = /("containers") / c.Id, queryString = Some(Uri.Query(params).toString))
         )
       })
       .via(docker)
@@ -129,7 +127,8 @@ class Docker(dockerHost: URI) {
     */
   def inspect(container: String): Future[ContainerInfo] = {
     request(RequestBuilding.Get(Uri(path = /("containers") / container / "json")))
-      .flatMap(e => e.to[ContainerInfo])
+      .mapAsync(1)(_.to[ContainerInfo])
+      .runWith(Sink.head)
   }
 
   /**
@@ -148,9 +147,10 @@ class Docker(dockerHost: URI) {
     }
 
     val req = RequestBuilding.Post(
-      Uri(path = /("containers") / container / "start", queryString = Some(Uri.Query(params).toString()))
+      Uri(path = /("containers") / container / "start", queryString = Some(Uri.Query(params).toString))
     )
     request(req)
+      .runWith(Sink.head)
       .map(ignored => startContainerActor(container))
   }
 
@@ -164,19 +164,20 @@ class Docker(dockerHost: URI) {
   def stop(container: String, timeout: Option[Int] = None): Future[Boolean] = {
     var params = Map[String, String]()
 
-    timeout match {
-      case Some(t) => params += ("t" -> t.toString)
-      case None =>
+    timeout foreach {
+      t => params += ("t" -> t.toString)
     }
 
     val req = RequestBuilding.Post(
-      Uri(path = /("containers") / container / "stop", queryString = Some(Uri.Query(params).toString()))
+      Uri(path = /("containers") / container / "stop", queryString = Some(Uri.Query(params).toString))
     )
-    requestFirst(req)
-      .map(resp => resp.status match {
+    requestStream(req)
+      .runWith(Sink.head)
+      .map(_.status match {
         case NoContent => true
         case NotModified => false
         case e@(ClientError(_) | ServerError(_)) => throw new IllegalStateException(e.reason())
+        case _ => ???
       })
   }
 
@@ -187,8 +188,35 @@ class Docker(dockerHost: URI) {
     * @param ex        description of the execution to perform
     * @return a [[Source]] which will have output published to it
     */
-  def exec(container: String, ex: Exec): Source[ExecOutput, Unit] = {
-    Source.actorPublisher[ExecOutput](Props(new ExecActor(this, container, ex))).mapMaterializedValue(_ ! ex)
+  def exec(container: String, ex: Exec): Source[ExecOutput, NotUsed] = {
+    request(RequestBuilding.Post(Uri(path = /("containers") / container / "exec"), ex))
+      .mapAsync(1)(_.to[Map[String, AnyRef]])
+      .flatMapConcat(m => {
+        logger.debug("created exec: {}", m)
+
+        m.get("Warnings") foreach {
+          _.asInstanceOf[Seq[String]].foreach(logger.warn)
+        }
+        val execId = m("Id").asInstanceOf[String]
+
+        requestStream(RequestBuilding.Post(Uri(path = /("exec") / execId / "start"), ExecStart(Detach = ex.Detach)))
+          .flatMapConcat(resp =>
+            resp.status match {
+              case OK =>
+                resp
+                  .entity
+                  .dataBytes
+                  .via(Framing.lengthField(4, 4, 1024 * 1024, ByteOrder.BIG_ENDIAN))
+                  .map({
+                    case b if b.isEmpty => ???
+                    case b if b(0) == 1 => StdOut(b.drop(8))
+                    case b if b(0) == 2 => StdErr(b.drop(8))
+                    case _ => ???
+                  }: PartialFunction[ByteString, ExecOutput])
+              case e@(ClientError(_) | ServerError(_)) => throw new IllegalStateException(e.reason)
+              case status => throw new IllegalStateException(s"Unknown status $status")
+            })
+      })
   }
 
   /**
@@ -210,37 +238,26 @@ class Docker(dockerHost: URI) {
                  filters: Map[String, Seq[String]] = Map.empty): Future[List[Container]] = {
     var params = Map[String, String]()
 
-    all match {
-      case true => params += ("all" -> "true")
-      case _ =>
-    }
-    limit match {
-      case 0 =>
-      case l => params += ("limit" -> l.toString)
-    }
-    before match {
-      case null =>
-      case b => params += ("before" -> b)
-    }
-    since match {
-      case null =>
-      case s => params += ("since" -> s)
-    }
-    size match {
-      case true => params += ("size" -> "true")
-      case _ =>
-    }
-    filters match {
-      case m if m.isEmpty =>
-      case m => params += ("filters" -> mapper.writeValueAsString(m))
-    }
+    if (all)
+      params += ("all" -> "true")
+    if (limit > 0)
+      params += ("limit" -> limit.toString)
+    if (before ne null)
+      params += ("before" -> before)
+    if (since ne null)
+      params += ("since" -> since)
+    if (size)
+      params += ("size" -> "true")
+    if (filters.nonEmpty)
+      params += ("filters" -> mapper.writeValueAsString(filters))
 
     val req = RequestBuilding.Get(Uri(
       path = /("containers") / "json",
-      queryString = Some(Uri.Query(params).toString())
+      queryString = Some(Uri.Query(params).toString)
     ))
     request(req)
-      .flatMap(e => e.to[List[Container]])
+      .mapAsync(1)(_.to[List[Container]])
+      .runWith(Sink.head)
   }
 
   /**
@@ -256,59 +273,42 @@ class Docker(dockerHost: URI) {
              filters: Map[String, Seq[String]] = Map.empty): Future[List[Image]] = {
     var params = Map[String, String]()
 
-    all match {
-      case true => params += ("all" -> "true")
-      case _ =>
-    }
-    filter match {
-      case null =>
-      case f => params += ("filter" -> f)
-    }
-    filters match {
-      case m if m.isEmpty =>
-      case m => params += ("filters" -> JsonMethods.mapper.writeValueAsString(m))
-    }
+    if (all)
+      params += ("all" -> "true")
+    if (filter ne null)
+      params += ("filter" -> filter)
+    if (filters.nonEmpty)
+      params += ("filters" -> JsonMethods.mapper.writeValueAsString(filters))
 
     val req = RequestBuilding.Get(Uri(
       path = /("images") / "json",
-      queryString = Some(Uri.Query(params).toString())
+      queryString = Some(Uri.Query(params).toString)
     ))
     request(req)
-      .flatMap(e => e.to[List[Image]])
-  }
-
-  /**
-    * Run an image. Not yet implemented.
-    *
-    * @param run
-    * @return
-    */
-  def run(run: Run): ActorRef = {
-    null
+      .mapAsync(1)(_.to[List[Image]])
+      .runWith(Sink.head)
   }
 
   private[docker] def requestStream(req: HttpRequest): Source[HttpResponse, NotUsed] = {
     Source.single(req)
       .map(req => {
-        logger.debug(req.toString())
+        logger.debug(req.toString)
         req
       })
       .via(docker)
   }
 
-  private[docker] def requestFirst(req: HttpRequest): Future[HttpResponse] = {
-    requestStream(req).runWith(Sink.head)
-  }
-
-  private[docker] def request(req: HttpRequest): Future[Unmarshal[ResponseEntity]] = {
-    requestFirst(req)
-      .flatMap(resp => resp.status match {
-        case OK | Created => Future.successful(Unmarshal(resp.entity))
-        case NoContent => Future.successful(null)
+  private[docker] def request(req: HttpRequest): Source[Unmarshal[ResponseEntity], NotUsed] = {
+    requestStream(req)
+      .mapAsync(1)(resp => resp.status match {
+        case OK | Created | NoContent => Future.successful(Unmarshal(resp.entity))
         case e@(ClientError(_) | ServerError(_)) => {
           logger.error("Request failed: {}", resp)
-          val msg = Await.result(resp.entity.dataBytes.runFold(ByteString.empty)((buff,bytes) => buff ++ bytes), Duration.Inf)
-          Future.failed(new RuntimeException(msg.decodeString(charset)))
+          resp
+            .entity
+            .dataBytes
+            .runFold(ByteString.empty)(_ ++ _)
+            .map(msg => throw new IllegalStateException(msg.decodeString(charset)))
         }
         case e => Future.failed(new RuntimeException(s"Unknown error $e"))
       })
@@ -355,17 +355,10 @@ class Docker(dockerHost: URI) {
 }
 
 object Docker {
+  val dockerHostEnv = System.getenv("DOCKER_HOST")
 
-  private val instance = Docker(System.getenv("DOCKER_HOST"))
-
-  def apply(): Docker = instance
-
-  def apply(dockerHost: String) = {
-    val uri = URI.create(dockerHost match {
-      case null | "" => "https://localhost:2376"
-      case h => h
-    })
-    new Docker(uri)
+  def apply(dockerHost: String = dockerHostEnv, sslctx: SSLContext = SSL.createSSLContext)
+           (implicit system: ActorSystem, materializer: ActorMaterializer, execCtx: ExecutionContext): Docker = {
+    new Docker(URI.create(dockerHost), sslctx)
   }
-
 }
