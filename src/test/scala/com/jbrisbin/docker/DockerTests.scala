@@ -126,7 +126,6 @@ class DockerTests {
     assertThat("Exec completes successfully", success)
   }
 
-  //  @Ignore
   @Test
   def canStreamOutput(): Unit = {
     val res = Await.result(
