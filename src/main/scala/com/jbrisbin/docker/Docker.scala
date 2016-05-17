@@ -18,7 +18,7 @@ import akka.stream.ActorMaterializer
 import akka.stream.actor.ActorPublisher
 import akka.stream.scaladsl._
 import akka.util.ByteString
-import com.fasterxml.jackson.databind.{ObjectMapper, SerializationFeature}
+import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.scala.DefaultScalaModule
 import de.heikoseeberger.akkahttpjson4s.Json4sSupport._
 import org.json4s.jackson.JsonMethods
@@ -45,7 +45,6 @@ class Docker(dockerHost: URI, sslctx: SSLContext)
   val mapper = {
     val m = new ObjectMapper()
     m.registerModule(DefaultScalaModule)
-    m.configure(SerializationFeature.INDENT_OUTPUT, true)
     m
   }
   val docker = Http().outgoingConnectionHttps(dockerHost.getHost, dockerHost.getPort, ConnectionContext.https(sslctx))
@@ -340,11 +339,12 @@ class Docker(dockerHost: URI, sslctx: SSLContext)
               }
             })
             .onSuccess {
-              case (stdout, stderr) if stderr.bytes.isEmpty => replyTo ! stdout.bytes
-              case (stdout, stderr) if stdout.bytes.isEmpty => {
+              case (stdout, stderr) if stdout.bytes.nonEmpty => replyTo ! stdout.bytes
+              case (stdout, stderr) if stderr.bytes.nonEmpty => {
                 val msg = stderr.bytes.decodeString(charset)
                 replyTo ! Status.Failure(new IllegalStateException(msg))
               }
+              case _ => ???
             }
 
         case msg => logger.warn("unknown message: {}", msg)
