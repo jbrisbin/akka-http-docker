@@ -14,7 +14,7 @@ import scala.concurrent.Await
 import scala.concurrent.duration._
 
 /**
-  * @author Jon Brisbin <jbrisbin@basho.com>
+  * Unit tests for Docker client.
   */
 class DockerTests extends WordSpec with Matchers with BeforeAndAfterEach {
 
