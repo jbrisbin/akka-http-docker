@@ -71,6 +71,7 @@ lazy val akkaHttpDocker = (project in file("."))
 
         // Testing
         "junit" % "junit" % junitVersion % "test",
+        "com.novocode" % "junit-interface" % "0.11" % "test",
         "org.hamcrest" % "hamcrest-library" % "1.3" % "test",
         "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
         "ch.qos.logback" % "logback-classic" % "1.1.7" % "test"

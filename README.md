@@ -8,6 +8,22 @@ Use SBT:
 
     $ sbt package
     
+### Running tests
+
+Before running the tests, you need the `alpine:latest` docker image:
+
+    $ docker pull alpine:latest
+    
+Then use SBT to run the tests:
+
+    $ sbt test
+    
+#### On Mac OS X
+
+If you are running Docker using [Docker Toolbox](https://docs.docker.com/mac/step_one/), 
+then launch Docker Quickstart Terminal, navigate to this project's directory, and
+run `sbt` from there.
+    
 ### Including as a Dependency
 
 To include the `akka-http-docker` in your project as a dependency, use the Sonatype Snapshot repositories:
