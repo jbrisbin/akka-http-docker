@@ -13,16 +13,16 @@ Use SBT:
 To include the `akka-http-docker` in your project as a dependency, use the Sonatype Snapshot repositories:
 
 ```scala
-resolvers ++= Seq(
-  Resolver.sonatypeRepo("snapshots")
-),
-
-libraryDependencies ++= {
-  Seq(
-    // Akka HTTP Docker
-    "com.jbrisbin.docker" %% "akka-http-docker" % "0.1.0-SNAPSHOT"
-  )
-}
+    resolvers ++= Seq(
+      Resolver.sonatypeRepo("snapshots")
+    ),
+    
+    libraryDependencies ++= {
+      Seq(
+        // Akka HTTP Docker
+        "com.jbrisbin.docker" %% "akka-http-docker" % "0.1.0-SNAPSHOT"
+      )
+    }
 ```
     
 ### Using
@@ -30,7 +30,9 @@ libraryDependencies ++= {
 The API will be simple in order to express the maximum amount of information with the least amount of static. To list all containers, and map the IDs of those containers to another processing chain, you would do the following:
 
 ```scala
-Docker().containers() onComplete {
+val docker = Docker()
+
+docker.containers() onComplete {
   case Success(c) => c.map(_.Id)
   case Failure(ex) => log.error(ex.getMessage, ex)
 }
@@ -43,13 +45,26 @@ To start a container, you may need to create one first. You can map the output o
 To create and start a container, use something like this:
 
 ```scala
-Docker()
-  .create(CreateContainer(
+val docker = Docker()
+
+docker.create(CreateContainer(
     Image="alpine", 
     Volumes = Map("/Users/johndoe/src/myapp" -> "/usr/lib/myapp")
   ))
-  .flatMap(c => Docker().start(c.Id))
+  .flatMap(c => docker.start(c.Id))
   .map(c => c ! Exec(Seq("/usr/lib/myapp/bin/start.sh")))
+```
+
+You can also use a `for` comprehension:
+
+```scala
+val docker = Docker()
+
+for {
+  c <- docker.create(CreateContainer(Image="alpine", Volumes = Map("/Users/johndoe/src/myapp" -> "/usr/lib/myapp")))
+  ref <- docker.start(c.Id)
+  exec <- ref ! Exec(Seq("/usr/lib/myapp/bin/start.sh"))
+} yield exec
 ```
 
 The `start()` method returns a `Future[ActorRef]` that represents your link to the container. To interact with a running container, send it messages using `!` or `?`.
