@@ -48,7 +48,7 @@ lazy val akkaHttpDocker = (project in file("."))
     libraryDependencies ++= {
       val scalaLoggingVersion = "2.1.2"
       val jacksonVersion = "2.7.3"
-      val akkaVersion = "2.4.4"
+      val akkaVersion = "2.4.5"
       val junitVersion = "4.12"
       val scalaTestVersion = "3.0.0-M15"
 

@@ -53,7 +53,7 @@ class Docker(dockerHost: URI, sslctx: SSLContext)
     * Create a Docker container described by the [[CreateContainer]].
     *
     * @param container describes how the container should be configured
-    * @return the results of an [[inspect()]], namely a [[Future]] of [[Container]]
+    * @return the results of an [[inspect()]], namely a [[Future]] of [[ContainerInfo]]
     */
   def create(container: CreateContainer): Future[ContainerInfo] = {
     var params = Map[String, String]()
@@ -97,7 +97,6 @@ class Docker(dockerHost: URI, sslctx: SSLContext)
 
     if (volumes)
       params += ("v" -> "true")
-
     if (force)
       params += ("force" -> "true")
 

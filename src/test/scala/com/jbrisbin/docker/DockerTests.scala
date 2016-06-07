@@ -106,12 +106,12 @@ class DockerTests {
         ref <- docker.start(ci.Id)
         exec <- docker.exec(ci.Id, Exec(Seq("ls", "-la", "/bin/busybox"))).map {
           case StdOut(bytes) => {
-            val str = bytes.decodeString(charset)
+            val str: String = bytes
             log.debug(str)
             true
           }
           case StdErr(bytes) => {
-            val str = bytes.decodeString(charset)
+            val str: String = bytes
             log.error(str)
             false
           }
@@ -128,16 +128,18 @@ class DockerTests {
 
   @Test
   def canStreamOutput(): Unit = {
+    val create = CreateContainer(
+      Image = "alpine",
+      Tty = true,
+      Cmd = Some(Seq("/bin/cat")),
+      Labels = testLabels
+    )
     val res = Await.result(
-      docker
-        .create(CreateContainer(
-          Image = "alpine",
-          Tty = true,
-          Cmd = Some(Seq("/bin/cat")),
-          Labels = testLabels
-        ))
-        .flatMap(c => docker.start(c.Id))
-        .flatMap(c => c ? Exec(Seq("ls", "-la", "/bin"))),
+      for {
+        c <- docker.create(create)
+        s <- docker.start(c.Id)
+        exec <- s ? Exec(Seq("ls", "-la", "/bin"))
+      } yield exec,
       timeout.duration
     )
     //log.debug("result: {}", res)
@@ -147,7 +149,7 @@ class DockerTests {
         stdout
           .decodeString(charset)
           .split("\n")
-          .filter(s => s.contains("uname"))
+          .filter(_.contains("uname"))
           .foldRight(0)((line, count) => count + 1)
       }
     }
