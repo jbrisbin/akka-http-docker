@@ -1,4 +1,6 @@
 language: scala
+env:
+  - DOCKER_CERT_PATH=/home/travis/.docker/machine/certs
 services:
   - docker
 jdk:
