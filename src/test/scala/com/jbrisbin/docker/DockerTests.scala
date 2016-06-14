@@ -32,10 +32,6 @@ class DockerTests extends WordSpec with Matchers with BeforeAndAfterEach {
   val docker = Docker()
 
   override def afterEach(): Unit = {
-    val cs = Await.result(
-      docker.containers(all = true, filters = Map("label" -> Seq("test=true"))),
-      timeout.duration
-    )
     Await.result(
       for {
         containers <- docker.containers(all = true, filters = Map("label" -> Seq("test=true")))
