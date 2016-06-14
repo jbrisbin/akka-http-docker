@@ -1,6 +1,7 @@
 language: scala
-env:
-  - DOCKER_CERT_PATH=/home/travis/.docker/machine/certs
+sudo: required
+before_install:
+  - sudo apt-get install -y docker-engine
 services:
   - docker
 jdk:
